@@ -1,0 +1,16 @@
+{
+  "name": "hermes-vps-browser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Hermes Desktop plugin: shows the backend's own browser screen in the right sidebar.",
+  "scripts": {
+    "build": "esbuild src/plugin.jsx --bundle --format=esm --platform=browser --target=chrome120 --jsx=automatic --jsx-import-source=react --external:@hermes/plugin-sdk --external:react --external:react/jsx-runtime --minify --legal-comments=none --banner:js=\"/* VPS Browser for Hermes Desktop. Source: src/plugin.jsx in this repo (bundles noVNC 1.7.0, MPL-2.0). */\" --outfile=vps-browser/plugin.js"
+  },
+  "dependencies": {
+    "@novnc/novnc": "1.7.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
