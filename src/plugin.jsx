@@ -11,7 +11,7 @@
  */
 import RFB from '@novnc/novnc'
 import { Button, Codicon, GlyphSpinner, host, PALETTE_AREA, PANES_AREA, resolveSiblingWsUrl } from '@hermes/plugin-sdk'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 
 import { TitlebarIcon } from './titlebar-fix.jsx'
 
@@ -300,6 +300,11 @@ function ScreenPane() {
             Reconnect
           </Button>
         )}
+        {api?.useMac ? (
+          <Button onClick={() => api.useMac()} size="xs" title="Switch to the browser on this laptop" variant="ghost">
+            <Codicon name="device-desktop" size="0.8125rem" /> Mac
+          </Button>
+        ) : null}
       </div>
       <div
         ref={canvasHost}
@@ -313,6 +318,152 @@ function ScreenPane() {
         }}
       />
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ browser switcher
+// The globe opens a small menu: VPS browser (this plugin's screen) or Mac browser (the
+// app's own in-app browser on this laptop, opened through ctx.runAction('view.showBrowser')).
+let api = null
+let menu = { open: false, top: 0, right: 0 }
+const menuSubs = new Set()
+const setMenu = next => {
+  menu = { ...menu, ...next }
+  menuSubs.forEach(fn => fn())
+}
+const useMenu = () =>
+  useSyncExternalStore(
+    fn => {
+      menuSubs.add(fn)
+      return () => menuSubs.delete(fn)
+    },
+    () => menu
+  )
+
+function macBrowserView() {
+  for (const el of document.querySelectorAll('webview[partition="persist:hermes-preview"]')) {
+    const r = el.getBoundingClientRect()
+    const shown = typeof el.checkVisibility === 'function' ? el.checkVisibility({ visibilityProperty: true, opacityProperty: true }) : true
+    if (r.width > 0 && r.height > 0 && shown) return el
+  }
+  return null
+}
+
+const MENU_ITEM = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  width: '100%',
+  padding: '7px 10px',
+  borderRadius: 8,
+  cursor: 'pointer',
+  textAlign: 'left',
+  color: 'var(--ui-text-primary, var(--foreground))'
+}
+
+function MenuItem({ icon, title, sub, checked, onPick }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <div
+      onClick={e => {
+        e.stopPropagation()
+        e.preventDefault()
+        onPick()
+      }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      role="menuitem"
+      style={{ ...MENU_ITEM, background: hover ? 'var(--ui-row-hover-background, rgb(127 127 127 / 0.12))' : 'transparent' }}
+    >
+      <Codicon name={icon} size="0.95rem" style={{ flexShrink: 0, opacity: 0.85 }} />
+      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+        <span style={{ fontSize: 13, lineHeight: '17px' }}>{title}</span>
+        {sub ? <span style={{ fontSize: 11.5, lineHeight: '15px', color: 'var(--ui-text-tertiary)' }}>{sub}</span> : null}
+      </span>
+      {checked ? <Codicon name="check" size="0.85rem" style={{ flexShrink: 0, color: 'var(--ui-accent)' }} /> : null}
+    </div>
+  )
+}
+
+function BrowserMenu() {
+  const state = useMenu()
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!state.open) return
+    const away = e => {
+      if (ref.current?.contains(e.target) || ref.current?.parentElement?.closest('button')?.contains(e.target)) return
+      setMenu({ open: false })
+    }
+    const esc = e => e.key === 'Escape' && setMenu({ open: false })
+    const blur = () => setMenu({ open: false })
+    document.addEventListener('pointerdown', away, true)
+    document.addEventListener('keydown', esc, true)
+    window.addEventListener('blur', blur)
+    return () => {
+      document.removeEventListener('pointerdown', away, true)
+      document.removeEventListener('keydown', esc, true)
+      window.removeEventListener('blur', blur)
+    }
+  }, [state.open])
+  // If the menu cannot actually be seen or clicked here, fall back to plain toggling.
+  useLayoutEffect(() => {
+    if (!state.open || !ref.current) return
+    const r = ref.current.getBoundingClientRect()
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 12)
+    if (!r.width || !r.height || !ref.current.contains(hit)) {
+      breadcrumb('menu-fallback', { w: r.width, h: r.height, hit: hit?.tagName })
+      setMenu({ open: false })
+      api?.toggleVps()
+    }
+  }, [state.open])
+  if (!state.open || !api) return null
+  const vps = api.vpsOpen()
+  const mac = Boolean(macBrowserView())
+  const pick = fn => () => {
+    setMenu({ open: false })
+    fn()
+  }
+  return (
+    <div
+      onClick={e => e.stopPropagation()}
+      onPointerDown={e => e.stopPropagation()}
+      ref={ref}
+      role="menu"
+      style={{
+        position: 'fixed',
+        top: state.top,
+        right: state.right,
+        width: 248,
+        padding: 4,
+        zIndex: 1000,
+        borderRadius: 12,
+        border: '1px solid var(--ui-stroke-secondary, var(--border))',
+        background: 'var(--ui-bg-elevated, #2b2b2b)',
+        boxShadow: '0 10px 30px -8px rgb(0 0 0 / 0.45)',
+        WebkitAppRegion: 'no-drag',
+        cursor: 'default',
+        fontWeight: 400,
+        whiteSpace: 'normal'
+      }}
+    >
+      <MenuItem checked={vps} icon="cloud" onPick={pick(api.useVps)} sub="Runs on the VPS, works with the laptop closed" title="VPS browser" />
+      <MenuItem checked={mac} icon="device-desktop" onPick={pick(api.useMac)} sub="This laptop, needs Hermes open" title="Mac browser" />
+      {vps || mac ? (
+        <>
+          <div style={{ height: 1, margin: '4px 6px', background: 'var(--ui-stroke-tertiary, var(--border))' }} />
+          <MenuItem icon="close" onPick={pick(api.closeAll)} title="Close browser" />
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+function GlobeIcon() {
+  return (
+    <TitlebarIcon onReport={reportTitlebar}>
+      <Codicon className="leading-none" name="globe" size="13.9px" />
+      <BrowserMenu />
+    </TitlebarIcon>
   )
 }
 
@@ -388,21 +539,76 @@ export default {
       }
     }
 
-    ctx.onDispose?.(() => closeTile?.())
-    breadcrumb('loaded', { usesWorkspace })
+    const runMac = () => {
+      const res = typeof ctx.runAction === 'function' ? ctx.runAction('view.showBrowser') : null
+      if (!res || res.ok === false) host.notify?.({ kind: 'info', message: 'Press ⌘⇧L to open the Mac browser' })
+      return res
+    }
+
+    const closeVps = () => {
+      if (closeTile) {
+        closeTile()
+        closeTile = null
+      }
+    }
+
+    const showVps = () => {
+      if (closeTile) host.revealPane?.(tileId)
+      else open()
+    }
+
+    api = {
+      vpsOpen: () => Boolean(closeTile && isVisible()),
+      toggleVps: toggle,
+      useVps: () => {
+        try {
+          if (macBrowserView()) runMac()
+          showVps()
+          breadcrumb('switch', { to: 'vps' })
+        } catch (err) {
+          host.notify?.({ kind: 'error', message: `VPS browser: ${errorText(err)}` })
+        }
+      },
+      useMac: () => {
+        try {
+          closeVps()
+          if (!macBrowserView()) runMac()
+          breadcrumb('switch', { to: 'mac' })
+        } catch (err) {
+          host.notify?.({ kind: 'error', message: `Mac browser: ${errorText(err)}` })
+        }
+      },
+      closeAll: () => {
+        closeVps()
+        if (macBrowserView()) runMac()
+        breadcrumb('switch', { to: 'none' })
+      }
+    }
+
+    const openMenu = event => {
+      const button = event?.currentTarget || document.querySelector('button[aria-label="Browser"]')
+      const r = button?.getBoundingClientRect?.()
+      if (!r) return toggle()
+      if (menu.open) return setMenu({ open: false })
+      setMenu({ open: true, top: Math.round(r.bottom + 6), right: Math.max(8, Math.round(window.innerWidth - r.right)) })
+      breadcrumb('menu', { vps: api.vpsOpen(), mac: Boolean(macBrowserView()) })
+    }
+
+    ctx.onDispose?.(() => {
+      closeTile?.()
+      setMenu({ open: false })
+      api = null
+    })
+    breadcrumb('loaded', { usesWorkspace, runAction: typeof ctx.runAction === 'function' })
 
     ctx.register({
       id: 'titlebar',
       area: 'titleBar.tools.right',
       data: {
         id: 'vps-browser',
-        label: 'VPS browser',
-        icon: (
-          <TitlebarIcon onReport={reportTitlebar}>
-            <Codicon className="leading-none" name="globe" size="13.9px" />
-          </TitlebarIcon>
-        ),
-        onSelect: toggle
+        label: 'Browser',
+        icon: <GlobeIcon />,
+        onSelect: openMenu
       }
     })
 
@@ -414,6 +620,28 @@ export default {
         label: 'Toggle VPS browser',
         keywords: ['browser', 'vps', 'screen', 'web', 'internet'],
         run: toggle
+      }
+    })
+
+    ctx.register({
+      id: 'palette-mac',
+      area: PALETTE_AREA,
+      data: {
+        id: 'vps-browser.mac',
+        label: 'Switch to Mac browser',
+        keywords: ['browser', 'mac', 'local', 'laptop'],
+        run: () => api?.useMac()
+      }
+    })
+
+    ctx.register({
+      id: 'palette-vps',
+      area: PALETTE_AREA,
+      data: {
+        id: 'vps-browser.vps',
+        label: 'Switch to VPS browser',
+        keywords: ['browser', 'vps', 'server'],
+        run: () => api?.useVps()
       }
     })
   }
