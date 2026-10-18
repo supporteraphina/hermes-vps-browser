@@ -1,6 +1,6 @@
 # VPS Browser for Hermes Desktop
 
-A globe button in the top right of Hermes Desktop that opens the VPS browser in the right sidebar.
+A globe button in the top right of Hermes Desktop that opens the VPS browser next to the chat, on the right.
 
 Hermes browses on its own screen on the backend server (Hermes Bot Screen). This plugin shows that screen live. Press **Take over** to use the mouse and keyboard yourself, then **Hand back** so Hermes can continue. Logins you make there stay in Hermes's browser.
 

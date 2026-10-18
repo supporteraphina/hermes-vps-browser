@@ -47,6 +47,21 @@ async function screenWsUrl(ticket) {
 
 const errorText = err => (err instanceof Error ? err.message : String(err?.message ?? err))
 
+const WORKSPACE_KEY = `${ID}:screen`
+const WORKSPACE_PANE_ID = `plugin-workspace:${WORKSPACE_KEY}`
+
+// One JSON line per event in ~/.hermes/vps-browser.log on the backend, so a click that
+// does nothing on the user's screen can be diagnosed from the server.
+function breadcrumb(event, detail = {}) {
+  try {
+    const line = JSON.stringify({ t: new Date().toISOString(), event, ...detail }) + '\n'
+    const b64 = btoa(unescape(encodeURIComponent(line)))
+    void host.request('shell.exec', { command: `echo ${b64} | base64 -d >> "$HOME/.hermes/vps-browser.log"` }).catch(() => {})
+  } catch {
+    // diagnostics only
+  }
+}
+
 function ScreenPane() {
   const [status, setStatus] = useState(null)
   const [lease, setLease] = useState(null)
@@ -304,37 +319,68 @@ export default {
   name: 'VPS Browser',
   description: 'Globe button in the title bar that shows the VPS browser in the right sidebar.',
   register(ctx) {
-    let disposePane = null
+    // Main-area tile docked to the right of the chat, opened through the same door the
+    // built-in Bots → Screen uses (host.openWorkspace). A plain plugin pane never got
+    // adopted into the layout on Hermes Desktop 0.22, so the button did nothing.
+    let closeTile = null
+    const usesWorkspace = typeof host.openWorkspace === 'function'
+    const tileId = usesWorkspace ? WORKSPACE_PANE_ID : PANE_ID
 
-    const openPane = () => {
-      if (!disposePane) {
-        disposePane = ctx.register({
+    const isVisible = () => {
+      try {
+        return Boolean(host.paneVisibility?.(tileId)?.get())
+      } catch {
+        return false
+      }
+    }
+
+    const open = () => {
+      if (usesWorkspace) {
+        closeTile = host.openWorkspace(WORKSPACE_KEY, {
+          title: 'VPS browser',
+          minWidth: '26rem',
+          dock: { pane: 'workspace', pos: 'right' },
+          render: () => <ScreenPane />,
+          onClose: () => {
+            closeTile = null
+          }
+        })
+      } else {
+        const dispose = ctx.register({
           id: PANE,
           area: PANES_AREA,
           title: 'VPS browser',
           render: () => <ScreenPane />,
           data: { placement: 'right', width: '720px' }
         })
+        closeTile = () => {
+          dispose()
+          closeTile = null
+        }
+        host.undismissPane?.(PANE_ID)
+        setTimeout(() => host.revealPane?.(PANE_ID), 0)
       }
-      host.undismissPane?.(PANE_ID)
-      setTimeout(() => host.revealPane?.(PANE_ID), 0)
-    }
-
-    const closePane = () => {
-      disposePane?.()
-      disposePane = null
     }
 
     const toggle = () => {
-      let visible = false
       try {
-        visible = Boolean(disposePane && host.paneVisibility?.(PANE_ID)?.get())
-      } catch {
-        visible = false
+        if (closeTile && isVisible()) {
+          closeTile()
+          closeTile = null
+        } else if (closeTile) {
+          host.revealPane?.(tileId)
+        } else {
+          open()
+        }
+        breadcrumb('toggle', { usesWorkspace, open: Boolean(closeTile), visible: isVisible() })
+      } catch (err) {
+        breadcrumb('toggle-error', { message: errorText(err) })
+        host.notify?.({ kind: 'error', message: `VPS browser: ${errorText(err)}` })
       }
-      if (visible) closePane()
-      else openPane()
     }
+
+    ctx.onDispose?.(() => closeTile?.())
+    breadcrumb('loaded', { usesWorkspace })
 
     ctx.register({
       id: 'titlebar',
