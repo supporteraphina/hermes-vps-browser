@@ -13,6 +13,8 @@ import RFB from '@novnc/novnc'
 import { Button, Codicon, GlyphSpinner, host, PALETTE_AREA, PANES_AREA, resolveSiblingWsUrl } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { TitlebarIcon } from './titlebar-fix.jsx'
+
 const ID = 'vps-browser'
 const PANE = 'screen'
 const PANE_ID = `${ID}:${PANE}`
@@ -314,6 +316,13 @@ function ScreenPane() {
   )
 }
 
+let titlebarReported = false
+function reportTitlebar(info) {
+  if (titlebarReported) return
+  titlebarReported = true
+  breadcrumb('titlebar', info)
+}
+
 export default {
   id: ID,
   name: 'VPS Browser',
@@ -388,7 +397,11 @@ export default {
       data: {
         id: 'vps-browser',
         label: 'VPS browser',
-        icon: <Codicon className="leading-none" name="globe" size="13.9px" />,
+        icon: (
+          <TitlebarIcon onReport={reportTitlebar}>
+            <Codicon className="leading-none" name="globe" size="13.9px" />
+          </TitlebarIcon>
+        ),
         onSelect: toggle
       }
     })
